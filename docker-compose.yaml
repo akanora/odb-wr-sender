@@ -1,0 +1,12 @@
+services:
+  sj-wr-sender:
+    image: sj-wr-sender:latest
+    container_name: sj-wr-sender
+    ports:
+      - "4175:4175"
+    volumes:
+      - ${SJ_WR_SENDER_CONFIG_PATH}:/app/config:ro
+      - ${SJ_WR_SENDER_GAME_DIR}:/app/cstrike:ro
+    restart: always
+    environment:
+      - TZ=UTC

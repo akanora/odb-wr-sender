@@ -1,0 +1,77 @@
+version: '3'
+
+vars:
+  DIST_DIR: ./release
+  IMAGE_NAME: sj-wr-sender
+
+tasks:
+  get-deps:
+    cmds:
+      - go get -u github.com/gofiber/fiber/v3
+      - go get -u github.com/BurntSushi/toml@latest
+      - go get -u github.com/gofiber/fiber/v3/middleware/healthcheck
+      - go get -u github.com/gofiber/fiber/v3/middleware/recover
+      - go get -u github.com/gofiber/fiber/v3/middleware/helmet
+      - go get -u github.com/gofiber/fiber/v3/middleware/limiter
+
+  build:
+    deps:
+      - vet
+    cmds:
+      - go build -o ./bin/app.exe ./cmd/app
+      - ./bin/app.exe
+
+  build-release:
+    cmds:
+      - rm -rf {{.DIST_DIR}}
+      - mkdir -p {{.DIST_DIR}}/config
+      - mkdir -p {{.DIST_DIR}}/scripting
+
+      - docker build --platform linux/amd64 -t {{.IMAGE_NAME}}:latest .
+
+      - docker save {{.IMAGE_NAME}}:latest -o {{.DIST_DIR}}/{{.IMAGE_NAME}}.tar
+
+      - cp docker-compose.yaml {{.DIST_DIR}}/
+      - cp config/app.toml {{.DIST_DIR}}/config/
+      
+      - cp scripting/sj-wr-sender.sp {{.DIST_DIR}}/scripting/sj-wr-sender.sp
+
+      # - mkdir -p {{.DIST_DIR}}/plugins
+      # - spcomp12 {{.DIST_DIR}}/scripting/sj-wr-sender.sp
+      # - mv {{.DIST_DIR}}/scripting/sj-wr-sender.smx {{.DIST_DIR}}/plugins
+
+      - |
+        cat <<EOF > {{.DIST_DIR}}/README.txt
+        docker load -i {{.IMAGE_NAME}}.tar
+        
+        docker compose up -d
+           
+        docker ps
+        docker logs -f {{.IMAGE_NAME}}
+        EOF
+
+      - |
+        cat <<EOF > {{.DIST_DIR}}/.env
+        SJ_WR_SENDER_CONFIG_PATH=./config
+        SJ_WR_SENDER_GAME_DIR=/home/steam/bhop-server/cstrike
+        EOF
+
+  run:
+    deps:
+      - vet
+    cmds:
+      - go run ./...
+
+  fmt:
+    cmds:
+      - go fmt ./...
+
+  vet:
+    deps:
+      - fmt
+    cmds:
+      - go vet ./...
+  
+  lint:
+    cmds:
+      - golangci-lint run

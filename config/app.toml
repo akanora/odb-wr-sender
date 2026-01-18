@@ -1,0 +1,41 @@
+[app]
+# Version
+version = "1.0.0"
+
+# Enviroment (development|staging|production)
+enviroment = "production"
+
+[server]
+# Port
+port = 4175
+
+# Address
+address = "0.0.0.0"
+
+# Auth keys
+auth_keys = ["authKey1", "authKey2", "authKey3"]
+
+# Rate limiter
+[server.rate_limiter]
+max_requests = 20
+expiration = "30s"
+
+[logger]
+# Level
+level = "info"
+
+[sourcejump]
+# Public IP
+public_ip = "127.0.0.1:27015"
+
+# Token
+private_key = "private_key"
+
+# Host name
+hostname = "bhop server"
+
+# Max file size
+max_file_size = 8388608 # 8 MB
+
+# Receiver
+receiver = "https://sj.shav.it/send_new_wr.php"
