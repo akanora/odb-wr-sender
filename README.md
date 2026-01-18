@@ -14,8 +14,8 @@ This is used to send only the record information without the replay file directl
     # Path to the directory containing app.toml config
     SJ_WR_SENDER_CONFIG_PATH=./config
 
-    # Path to the directory with replays
-    SJ_WR_SENDER_REPLAYS_FOLDER=/home/steam/bhop-server/cstrike/addons/sourcemod/data
+    # Path to the game directory
+    SJ_WR_SENDER_GAME_DIR=/home/steam/bhop-server/cstrike
 3. Configure **app.toml** file
 4. Load the Docker image
     ```bash
