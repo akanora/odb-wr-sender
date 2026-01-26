@@ -25,15 +25,6 @@ expiration = "30s"
 level = "info"
 
 [sourcejump]
-# Public IP
-public_ip = "127.0.0.1:27015"
-
-# Token
-private_key = "private_key"
-
-# Host name
-hostname = "bhop server"
-
 # Max file size
 max_file_size = 8388608 # 8 MB
 

@@ -29,9 +29,6 @@ type Logger struct {
 }
 
 type SourceJump struct {
-	PublicIP    string `toml:"public_ip"`
-	Hostname    string `toml:"hostname"`
-	PrivateKey  string `toml:"private_key"`
 	MaxFileSize int64  `toml:"max_file_size"`
 	Receiver    string `toml:"receiver"`
 }

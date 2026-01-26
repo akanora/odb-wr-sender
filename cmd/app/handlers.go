@@ -58,9 +58,9 @@ func (app *application) sourcejumpSendWR(c fiber.Ctx) error {
 	}
 
 	payload := data.SourceJumpPayload{
-		PublicIP:    app.config.SourceJump.PublicIP,
-		Hostname:    app.config.SourceJump.Hostname,
-		PrivateKey:  app.config.SourceJump.PrivateKey,
+		PublicIP:    req.PublicIP,
+		Hostname:    req.Hostname,
+		PrivateKey:  req.PrivateKey,
 		TimerPlugin: "shavit",
 		Map:         req.Map,
 		SteamID:     req.SteamID,

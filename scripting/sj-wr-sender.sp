@@ -11,6 +11,10 @@ Convar gCV_URL = null;
 Convar gCV_AuthKey = null;
 Convar gCV_GameDir = null;
 
+char gS_SJAuthKey[64];
+ConVar gCV_Authentication = null;
+ConVar gCV_PublicIP = null;
+
 char gS_URL[128];
 char gS_AuthKey[64];
 char gS_GameDir[PLATFORM_MAX_PATH];
@@ -37,6 +41,9 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 public void OnPluginStart()
 {
     tickrate = RoundToZero(1.0 / GetTickInterval());
+
+    gCV_PublicIP = new Convar("sourcejump_public_ip", "127.0.0.1:27015", "Input the IP:PORT of the game server here. It will be used to identify the game server.");
+	gCV_Authentication = new Convar("sourcejump_private_key", "", "Fill in your SourceJump API access key here. This key can be used to submit records to the database using your server key - abuse will lead to removal.");
 
     gCV_AuthKey = new Convar("sj_wr_sender_auth_key", "authKey1", "API Key");
     gCV_URL = new Convar("sj_wr_sender_url", "http://127.0.0.1:4175/sourcejump/send-wr", "URL");
@@ -87,6 +94,18 @@ public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, i
     char date[32];
     FormatTime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", GetTime());
 
+    if (strlen(gS_SJAuthKey) == 0)
+	{
+		gCV_Authentication.GetString(gS_SJAuthKey, sizeof(gS_SJAuthKey));
+	}
+	gCV_Authentication.SetString("");
+
+	char publicIP[32];
+	gCV_PublicIP.GetString(publicIP, sizeof(publicIP));
+
+    char hostname[128];
+	FindConVar("hostname").GetString(hostname, sizeof(hostname));
+
     JSONObject data = new JSONObject();
     data.SetString("map", map);
     data.SetString("steamid", steamID);
@@ -97,6 +116,9 @@ public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, i
     data.SetInt("jumps", jumps);
     data.SetString("date", date);
 	data.SetInt("tickrate", tickrate);
+    data.SetString("hostname", hostname);
+    data.SetString("public_ip", publicIP);
+	data.SetString("private_key", gS_SJAuthKey);
     
     char replayFullPath[PLATFORM_MAX_PATH];
     Format(replayFullPath, sizeof(replayFullPath), "%s/%s", gS_GameDir, replaypath);

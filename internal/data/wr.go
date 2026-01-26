@@ -12,6 +12,9 @@ type WRRequest struct {
 	Date       string  `json:"date"`
 	Tickrate   int     `json:"tickrate"`
 	ReplayPath string  `json:"replay_path"`
+	Hostname   string  `json:"hostname"`
+	PublicIP   string  `json:"public_ip"`
+	PrivateKey string  `json:"private_key"`
 }
 
 // SourceJumpPayload - what will be sent to sourcejump (or another receiver)
