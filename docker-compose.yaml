@@ -3,7 +3,7 @@ services:
     image: odb-wr-sender:latest
     container_name: odb-wr-sender
     ports:
-      - "4175:4175"
+      - "4176:4176"
     volumes:
       - ${ODB_WR_SENDER_CONFIG_PATH}:/app/config:ro
       - ${ODB_WR_SENDER_GAME_DIR}:/app/cstrike:ro

@@ -7,7 +7,7 @@ enviroment = "production"
 
 [server]
 # Port
-port = 4175
+port = 4176
 
 # Address
 address = "0.0.0.0"

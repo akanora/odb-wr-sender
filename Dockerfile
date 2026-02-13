@@ -20,6 +20,6 @@ WORKDIR /app
 COPY --from=builder /app/build/app .
 COPY --from=builder /app/config ./config
 
-EXPOSE 4175
+EXPOSE 4176
 
 CMD ["./app", "-config", "config/app.toml"]
