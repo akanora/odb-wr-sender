@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/happydez/sj-wr-sender/internal/config"
+	"github.com/akanora/odb-wr-sender/internal/config"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -53,7 +53,7 @@ func main() {
 
 	// Server
 	app.server = fiber.New(fiber.Config{
-		ServerHeader: "SourceJump WR Sender",
+		ServerHeader: "OffstyleDB WR Sender",
 		IdleTimeout:  1 * time.Minute,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,

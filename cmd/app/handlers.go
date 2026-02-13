@@ -2,21 +2,22 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/happydez/sj-wr-sender/internal/data"
-	"github.com/happydez/sj-wr-sender/internal/validator"
+	"github.com/akanora/odb-wr-sender/internal/data"
+	"github.com/akanora/odb-wr-sender/internal/validator"
 
 	"github.com/gofiber/fiber/v3"
 )
 
-func (app *application) sourcejumpSendWR(c fiber.Ctx) error {
+func (app *application) offstyleDBSendWR(c fiber.Ctx) error {
 	var req data.WRRequest
 	if err := c.Bind().JSON(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -31,6 +32,7 @@ func (app *application) sourcejumpSendWR(c fiber.Ctx) error {
 	v.Check(req.Tickrate == 100, "tickrate", "only 100 tickrate records are accepted")
 	v.Check(req.Strafes >= 0, "strafes", "strafes count cannot be negative")
 	v.Check(req.Jumps >= 0, "jumps", "jumps count cannot be negative")
+	v.Check(req.Style >= 0, "style", "style must be zero or higher")
 	v.Check(validator.NotBlank(req.ReplayPath), "replay_path", "replay file path is required")
 	v.Check(validator.PermittedValue(filepath.Ext(req.ReplayPath), ".replay", ".rec", ".txt"), "replay_path", "unsupported file extension")
 	if !v.Valid() {
@@ -40,51 +42,50 @@ func (app *application) sourcejumpSendWR(c fiber.Ctx) error {
 		})
 	}
 
-	var base64Replay *string
-	fileInfo, err := os.Stat(req.ReplayPath)
-	if err != nil {
-		app.logger.Warn("could not read replay file", "path", req.ReplayPath, "err", err)
-	} else if fileInfo.Size() > app.config.SourceJump.MaxFileSize {
-		app.logger.Info("replay file skipped: too large", "path", req.ReplayPath, "size_mb", float64(fileInfo.Size())/1024/1024)
-	} else {
-		fileContent, err := os.ReadFile(req.ReplayPath)
-		if err != nil {
-			app.logger.Error("failed to read replay file", "path", req.ReplayPath, "err", err)
-		} else {
-			encoded := base64.StdEncoding.EncodeToString(fileContent)
-			base64Replay = &encoded
-			app.logger.Debug("replay file encoded", "path", req.ReplayPath, "size_mb", float64(fileInfo.Size())/1024/1024)
-		}
+	fileInfo, fileStatErr := os.Stat(req.ReplayPath)
+	if fileStatErr != nil {
+		app.logger.Warn("could not read replay file", "path", req.ReplayPath, "err", fileStatErr)
 	}
 
-	payload := data.SourceJumpPayload{
-		PublicIP:    req.PublicIP,
-		Hostname:    req.Hostname,
-		PrivateKey:  req.PrivateKey,
-		TimerPlugin: "shavit",
-		Map:         req.Map,
-		SteamID:     req.SteamID,
-		Name:        req.Name,
-		Time:        req.Time,
-		Sync:        req.Sync,
-		Strafes:     req.Strafes,
-		Jumps:       req.Jumps,
-		Date:        req.Date,
-		Tickrate:    req.Tickrate,
-		ReplayFile:  base64Replay,
+	payload := data.OffstyleDBPayload{
+		Map:      req.Map,
+		SteamID:  req.SteamID,
+		Name:     req.Name,
+		Time:     req.Time,
+		Sync:     req.Sync,
+		Strafes:  req.Strafes,
+		Jumps:    req.Jumps,
+		Date:     req.Date,
+		Tickrate: req.Tickrate,
+		Style:    req.Style,
 	}
 
-	app.logger.Debug("sourcejump payload", "payload", payload)
+	app.logger.Debug("offstyledb payload", "payload", payload)
 
-	go func(payload data.SourceJumpPayload) {
+	go func(payload data.OffstyleDBPayload, replayPath string, replayInfo os.FileInfo, replayStatErr error) {
 		client := &http.Client{
 			Timeout: 30 * time.Second,
 		}
 
+		baseURL := strings.TrimRight(app.config.OffstyleDB.Receiver, "/")
+		submitURL := baseURL + "/submit_record_nr"
+		uploadURL := baseURL + "/upload_replay"
+
 		jsonData, _ := json.Marshal(payload)
-		resp, err := client.Post(app.config.SourceJump.Receiver, "application/json", bytes.NewBuffer(jsonData))
+		request, err := http.NewRequest(http.MethodPost, submitURL, bytes.NewBuffer(jsonData))
 		if err != nil {
-			app.logger.Error("failed to send WR to SourceJump", "error", err)
+			app.logger.Error("failed to build OffstyleDB request", "error", err)
+			return
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("auth", req.PrivateKey)
+		request.Header.Set("public_ip", req.PublicIP)
+		request.Header.Set("hostname", req.Hostname)
+		request.Header.Set("timer_plugin", "shavit")
+
+		resp, err := client.Do(request)
+		if err != nil {
+			app.logger.Error("failed to send record to OffstyleDB", "error", err)
 			return
 		}
 		defer func() {
@@ -94,21 +95,108 @@ func (app *application) sourcejumpSendWR(c fiber.Ctx) error {
 		if (resp.StatusCode != http.StatusCreated) && (resp.StatusCode != http.StatusOK) {
 			respBody, err := io.ReadAll(resp.Body)
 			if err != nil {
-				app.logger.Error("could not read response body", "status", resp.Status, "error", err)
+				app.logger.Error("could not read OffstyleDB response body", "status", resp.Status, "error", err)
 				return
 			}
 
 			if len(respBody) > 0 {
-				app.logger.Error("SourceJump returned error status", "status", resp.Status, "body", string(respBody))
+				app.logger.Error("OffstyleDB returned error status", "status", resp.Status, "body", string(respBody))
 			} else {
-				app.logger.Error("SourceJump returned error status with empty body", "status", resp.Status)
+				app.logger.Error("OffstyleDB returned error status with empty body", "status", resp.Status)
 			}
 
 			return
 		}
 
-		app.logger.Debug("WR successfully sent to SourceJump", "map", payload.Map, "player", payload.Name)
-	}(payload)
+		app.logger.Debug("record submitted to OffstyleDB", "map", payload.Map, "player", payload.Name)
+
+		var submitResponse struct {
+			ReplayKey string `json:"replay_key"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&submitResponse); err != nil {
+			app.logger.Debug("OffstyleDB submit response did not contain JSON", "error", err)
+			return
+		}
+
+		if submitResponse.ReplayKey == "" {
+			app.logger.Debug("OffstyleDB submit response missing replay_key")
+			return
+		}
+
+		if replayStatErr != nil {
+			app.logger.Warn("replay file missing, skipping upload", "path", replayPath)
+			return
+		}
+
+		if replayInfo.Size() > app.config.OffstyleDB.MaxFileSize {
+			app.logger.Info("replay file skipped: too large", "path", replayPath, "size_mb", float64(replayInfo.Size())/1024/1024)
+			return
+		}
+
+		uploadBody := &bytes.Buffer{}
+		writer := multipart.NewWriter(uploadBody)
+		file, err := os.Open(replayPath)
+		if err != nil {
+			app.logger.Error("failed to open replay file", "path", replayPath, "err", err)
+			_ = writer.Close()
+			return
+		}
+
+		part, err := writer.CreateFormFile("file", filepath.Base(replayPath))
+		if err != nil {
+			app.logger.Error("failed to create replay form file", "err", err)
+			_ = file.Close()
+			_ = writer.Close()
+			return
+		}
+
+		if _, err := io.Copy(part, file); err != nil {
+			app.logger.Error("failed to stream replay file", "err", err)
+			_ = file.Close()
+			_ = writer.Close()
+			return
+		}
+		_ = file.Close()
+
+		if err := writer.Close(); err != nil {
+			app.logger.Error("failed to finalize replay upload body", "err", err)
+			return
+		}
+
+		uploadRequest, err := http.NewRequest(http.MethodPost, uploadURL, uploadBody)
+		if err != nil {
+			app.logger.Error("failed to build replay upload request", "err", err)
+			return
+		}
+
+		uploadRequest.Header.Set("Content-Type", writer.FormDataContentType())
+		uploadRequest.Header.Set("auth", req.PrivateKey)
+		uploadRequest.Header.Set("public_ip", req.PublicIP)
+		uploadRequest.Header.Set("hostname", req.Hostname)
+		uploadRequest.Header.Set("timer_plugin", "shavit")
+		uploadRequest.Header.Set("replay_key", submitResponse.ReplayKey)
+
+		uploadResp, err := client.Do(uploadRequest)
+		if err != nil {
+			app.logger.Error("failed to upload replay to OffstyleDB", "error", err)
+			return
+		}
+		defer func() {
+			_ = uploadResp.Body.Close()
+		}()
+
+		if uploadResp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(uploadResp.Body)
+			if len(body) > 0 {
+				app.logger.Error("OffstyleDB replay upload failed", "status", uploadResp.Status, "body", string(body))
+			} else {
+				app.logger.Error("OffstyleDB replay upload failed", "status", uploadResp.Status)
+			}
+			return
+		}
+
+		app.logger.Debug("replay uploaded to OffstyleDB", "map", payload.Map, "player", payload.Name)
+	}(payload, req.ReplayPath, fileInfo, fileStatErr)
 
 	return c.SendStatus(fiber.StatusAccepted)
 }

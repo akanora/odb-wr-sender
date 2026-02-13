@@ -24,9 +24,9 @@ expiration = "30s"
 # Level
 level = "info"
 
-[sourcejump]
+[offstyledb]
 # Max file size
-max_file_size = 8388608 # 8 MB
+max_file_size = 104857600 # 100 MB
 
 # Receiver
-receiver = "https://sj.shav.it/send_new_wr.php"
+receiver = "https://offstyles.tommyy.dev/api"

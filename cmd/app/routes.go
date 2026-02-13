@@ -4,7 +4,7 @@ func (app *application) routes() {
 	// healthcheck
 	app.healthcheck()
 
-	// sourcejump wr sender
-	sj := app.server.Group("/sourcejump")
-	sj.Post("send-wr", app.sourcejumpSendWR)
+	// offstyledb wr sender
+	odb := app.server.Group("/offstyledb")
+	odb.Post("send-wr", app.offstyleDBSendWR)
 }

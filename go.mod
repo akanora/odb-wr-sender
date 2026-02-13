@@ -1,4 +1,4 @@
-module github.com/happydez/sj-wr-sender
+module github.com/akanora/odb-wr-sender
 
 go 1.25.5
 

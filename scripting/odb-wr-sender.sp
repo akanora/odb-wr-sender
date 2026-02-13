@@ -13,7 +13,7 @@ Convar gCV_GameDir = null;
 Convar gCV_ReplaysDir = null;
 Convar gCV_Hostname = null;
 
-char gS_SJAuthKey[64];
+char gS_ODBAuthKey[64];
 ConVar gCV_Authentication = null;
 ConVar gCV_PublicIP = null;
 
@@ -26,11 +26,11 @@ Database gH_Database = null;
 
 public Plugin myinfo =
 {
-	name = "sj-wr-sender",
+    name = "odb-wr-sender",
 	author = "happydez",
 	description = "✿˘✧.*☆*✲☆⋆❤˘━✧.*",
 	version = "1.0.0",
-	url = "https://github.com/happydez/sj-wr-sender"
+    url = "https://github.com/akanora/odb-wr-sender"
 }
 
 native float Shavit_GetWorldRecord(int style, int track);
@@ -54,14 +54,14 @@ public void OnPluginStart()
 {
     tickrate = RoundToZero(1.0 / GetTickInterval());
 
-    gCV_PublicIP = new Convar("sourcejump_public_ip", "127.0.0.1:27015", "Input the IP:PORT of the game server here. It will be used to identify the game server.");
-	gCV_Authentication = new Convar("sourcejump_private_key", "", "Fill in your SourceJump API access key here. This key can be used to submit records to the database using your server key - abuse will lead to removal.");
+    gCV_PublicIP = new Convar("odb_public_ip", "127.0.0.1:27015", "Input the IP:PORT of the game server here. It will be used to identify the game server.");
+	gCV_Authentication = new Convar("odb_private_key", "", "Fill in your OffstyleDB API access key here. This key can be used to submit records to the database using your server key - abuse will lead to removal.");
 
-    gCV_AuthKey = new Convar("sj_wr_sender_auth_key", "authKey1", "API Key");
-    gCV_URL = new Convar("sj_wr_sender_url", "http://127.0.0.1:4175/sourcejump/send-wr", "URL");
-    gCV_GameDir = new Convar("sj_wr_game_dir", "/app/cstrike", "Game dir");
-    gCV_ReplaysDir = new Convar("sj_wr_replays_dir", "replaybot/0", "Replays dir");
-    gCV_Hostname = new Convar("sj_wr_hostname", "insert your hostname here", "hostname");
+    gCV_AuthKey = new Convar("odb_wr_sender_auth_key", "authKey1", "API Key");
+    gCV_URL = new Convar("odb_wr_sender_url", "http://127.0.0.1:4175/offstyledb/send-wr", "URL");
+    gCV_GameDir = new Convar("odb_wr_game_dir", "/app/cstrike", "Game dir");
+    gCV_ReplaysDir = new Convar("odb_wr_replays_dir", "replaybot/0", "Replays dir");
+    gCV_Hostname = new Convar("odb_wr_hostname", "insert your hostname here", "hostname");
 
     gCV_AuthKey.AddChangeHook(OnConVarChanged);
     gCV_URL.AddChangeHook(OnConVarChanged);
@@ -105,7 +105,7 @@ public void SQL_SendWR_Callback(Database db, DBResultSet results, const char[] e
 {
 	if ((results == null) || (results.RowCount == 0) || !results.FetchRow())
 	{
-        LogMessage("[sj-wr-sender] SQL_SendWR_Callback: No results from record selection query.");
+        LogMessage("[odb-wr-sender] SQL_SendWR_Callback: No results from record selection query.");
 		return;
 	}
 
@@ -134,7 +134,7 @@ public void SQL_SendWR_Callback(Database db, DBResultSet results, const char[] e
     gCV_ReplaysDir.GetString(replaypath, sizeof(replaypath));
     Format(replaypath, sizeof(replaypath), "%s/%s.replay", replaypath, map);
 
-    SendSJWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath);
+    SendODBWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath, 0);
 }
 
 public void OnConVarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
@@ -176,14 +176,14 @@ public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, i
     gCV_ReplaysDir.GetString(replaypath, sizeof(replaypath));
     Format(replaypath, sizeof(replaypath), "%s/%s.replay", replaypath, map);
 
-    SendSJWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath);
+    SendODBWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath, style);
 }
 
-void SendSJWR(char[] map, char[] steamID, const char[] name, float time, float sync, int strafes, int jumps, char[] date, const char[] replaypath)
+void SendODBWR(char[] map, char[] steamID, const char[] name, float time, float sync, int strafes, int jumps, char[] date, const char[] replaypath, int style)
 {
-    if (strlen(gS_SJAuthKey) == 0)
+    if (strlen(gS_ODBAuthKey) == 0)
 	{
-		gCV_Authentication.GetString(gS_SJAuthKey, sizeof(gS_SJAuthKey));
+        gCV_Authentication.GetString(gS_ODBAuthKey, sizeof(gS_ODBAuthKey));
 	}
 	gCV_Authentication.SetString("");
 
@@ -205,7 +205,8 @@ void SendSJWR(char[] map, char[] steamID, const char[] name, float time, float s
 	data.SetInt("tickrate", tickrate);
     data.SetString("hostname", hostname);
     data.SetString("public_ip", publicIP);
-	data.SetString("private_key", gS_SJAuthKey);
+    data.SetString("private_key", gS_ODBAuthKey);
+    data.SetInt("style", style);
     
     char replayFullPath[PLATFORM_MAX_PATH];
     Format(replayFullPath, sizeof(replayFullPath), "%s/%s", gS_GameDir, replaypath);
@@ -215,14 +216,14 @@ void SendSJWR(char[] map, char[] steamID, const char[] name, float time, float s
     req.SetHeader("X-API-Key", gS_AuthKey);
     req.SetHeader("Content-Type", "application/json");
 
-    req.Post(data, OnSendSJWR_Callback);
+    req.Post(data, OnSendODBWR_Callback);
 }
 
-void OnSendSJWR_Callback(HTTPResponse response, any value)
+void OnSendODBWR_Callback(HTTPResponse response, any value)
 {
     if ((response.Status != HTTPStatus_Accepted) && (response.Status != HTTPStatus_OK))
     {
-        LogError("[sj-wr-sender] Failed. Status: %d", response.Status);
+		LogError("[odb-wr-sender] Failed. Status: %d", response.Status);
     }
 }
 
@@ -237,7 +238,7 @@ Database GetTimerDatabaseHandle()
 	{
 		if ((db = SQL_Connect("shavit", true, err, sizeof(err))) == null)
 		{
-			SetFailState("[sj-wr-sender] plugin startup failed. Reason: %s", err);
+            SetFailState("[odb-wr-sender] plugin startup failed. Reason: %s", err);
 		}
 	}
 	else
@@ -257,7 +258,7 @@ void GetTimerSQLPrefix(char[] buffer, int maxlen)
 	File file = OpenFile(path, "r");
 	if (file == null)
 	{
-		SetFailState("[sj-wr-sender] Cannot open \"configs/shavit-prefix.txt\". Make sure this file exists and that the server has read permissions to it.");
+        SetFailState("[odb-wr-sender] Cannot open \"configs/shavit-prefix.txt\". Make sure this file exists and that the server has read permissions to it.");
 	}
 
 	char line[PLATFORM_MAX_PATH * 2];

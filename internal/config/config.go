@@ -28,7 +28,7 @@ type Logger struct {
 	Level string `toml:"level"`
 }
 
-type SourceJump struct {
+type OffstyleDB struct {
 	MaxFileSize int64  `toml:"max_file_size"`
 	Receiver    string `toml:"receiver"`
 }
@@ -37,7 +37,7 @@ type Config struct {
 	App        App        `toml:"app"`
 	Server     Server     `toml:"server"`
 	Logger     Logger     `toml:"logger"`
-	SourceJump SourceJump `toml:"sourcejump"`
+	OffstyleDB OffstyleDB `toml:"offstyledb"`
 }
 
 func Load(path string) (*Config, error) {
