@@ -1,9 +1,13 @@
+#define API_BASE_URL "https://offstyles.tommyy.dev/api"
+
 #pragma semicolon 1
 #pragma newdecls required
+#pragma dynamic 131072
 
 #include <sourcemod>
 #include <convar_class>
 #include <ripext>
+#include <sha1>
 
 int tickrate;
 
@@ -20,9 +24,12 @@ ConVar gCV_PublicIP = null;
 char gS_URL[128];
 char gS_AuthKey[64];
 char gS_GameDir[PLATFORM_MAX_PATH];
+char gS_StyleHash[160];
 
 char gS_MySQLPrefix[32];
 Database gH_Database = null;
+
+StringMap gM_StyleMapping = null;
 
 public Plugin myinfo =
 {
@@ -58,7 +65,7 @@ public void OnPluginStart()
 	gCV_Authentication = new Convar("odb_private_key", "", "Fill in your OffstyleDB API access key here. This key can be used to submit records to the database using your server key - abuse will lead to removal.");
 
     gCV_AuthKey = new Convar("odb_wr_sender_auth_key", "authKey1", "API Key");
-    gCV_URL = new Convar("odb_wr_sender_url", "http://127.0.0.1:4175/offstyledb/send-wr", "URL");
+    gCV_URL = new Convar("odb_wr_sender_url", "http://127.0.0.1:4176/offstyledb/send-wr", "URL");
     gCV_GameDir = new Convar("odb_wr_game_dir", "/app/cstrike", "Game dir");
     gCV_ReplaysDir = new Convar("odb_wr_replays_dir", "replaybot/0", "Replays dir");
     gCV_Hostname = new Convar("odb_wr_hostname", "insert your hostname here", "hostname");
@@ -69,7 +76,166 @@ public void OnPluginStart()
 
     Convar.AutoExecConfig();
 
-    RegAdminCmd("sm_send_wr", Command_SendWR, ADMFLAG_RCON);
+    gM_StyleMapping = new StringMap();
+
+    // RegAdminCmd("sm_send_wr", Command_SendWR, ADMFLAG_RCON);
+}
+
+public void OnPluginEnd()
+{
+    if (gM_StyleMapping != null)
+    {
+        LogMessage("[OSdb] Cleaning up StyleMapping StringMap");
+        delete gM_StyleMapping;
+        gM_StyleMapping = null;
+    }
+}
+
+public void OnConfigsExecuted()
+{
+    GetStyleMapping();
+}
+
+void GetStyleMapping(bool forceRefresh = false)
+{
+    LogMessage("[OSdb] Starting style mapping request (forceRefresh: %s)", forceRefresh ? "true" : "false");
+    
+    if (!forceRefresh)
+    {
+        char temp[160];
+        // In Pawn, use strcopy for strings, not '='
+        strcopy(temp, sizeof(temp), gS_StyleHash); 
+        HashStyleConfig();
+
+        if (strcmp(temp, gS_StyleHash) == 0)
+        {
+            LogMessage("[OSdb] Style hash unchanged, skipping mapping request");
+            return;
+        }
+    }
+    else
+    {
+        LogMessage("[OSdb] Force refresh requested, bypassing hash check");
+    }
+
+    LogMessage("[OSdb] Style hash changed or forced refresh, requesting new mapping from server");
+
+    // FIX: Format the URL properly instead of using ...
+    char sFullURL[256];
+    Format(sFullURL, sizeof(sFullURL), "%s/style_mapping", API_BASE_URL);
+
+    HTTPRequest hHTTPRequest = new HTTPRequest(sFullURL);
+    JSONObject hJSONObject = new JSONObject();
+
+    AddHeaders(hHTTPRequest);
+
+    char sPath[PLATFORM_MAX_PATH];
+    BuildPath(Path_SM, sPath, sizeof(sPath), "configs/shavit-styles.cfg");
+
+    if (FileExists(sPath))
+    {
+        File fFile = OpenFile(sPath, "rb");
+
+        if (fFile != null && fFile.Seek(0, SEEK_END))
+        {
+            int iSize = fFile.Position;
+            fFile.Seek(0, SEEK_SET);
+
+            char[] sFileContents = new char[iSize + 1];
+            fFile.ReadString(sFileContents, iSize + 1, iSize);
+            delete fFile;
+
+            char[] sFileContentsEncoded = new char[iSize * 2];
+            Crypt_Base64Encode(sFileContents, sFileContentsEncoded, iSize * 2, iSize);
+
+            hJSONObject.SetString("data", sFileContentsEncoded);
+        }
+        else {
+            delete fFile;
+            delete hJSONObject;
+            delete hHTTPRequest;
+            return;
+        }
+    }
+    else {
+        // Cleaning up handles before failing
+        delete hJSONObject;
+        delete hHTTPRequest;
+        SetFailState("Couldnt find configs/shavit-styles.cfg");
+        return;
+    }
+
+    hHTTPRequest.Post(hJSONObject, Callback_OnStyleMapping);
+
+    delete hJSONObject;
+}
+
+public void Callback_OnStyleMapping(HTTPResponse resp, any value)
+{
+    if (resp.Status != HTTPStatus_OK || resp.Data == null) return;
+
+    JSONObject data = view_as<JSONObject>(resp.Data);
+    char s_Data[512];
+    data.GetString("data", s_Data, sizeof(s_Data));
+    
+    gM_StyleMapping.Clear();
+    char parts[512][8];
+    int count = ExplodeString(s_Data, ",", parts, sizeof(parts), sizeof(parts[]));
+
+    for (int i = 0; i < count - 1; i += 2)
+    {
+        gM_StyleMapping.SetValue(parts[i], StringToInt(parts[i + 1]));
+    }
+}
+
+int ConvertStyle(int style)
+{
+    if (gM_StyleMapping == null)
+    {
+        LogError("[OSdb] Style mapping is null in ConvertStyle");
+        LogMessage("[OSdb] ConvertStyle called but style mapping is null");
+        return -1;
+    }
+    
+    char s[16];
+    IntToString(style, s, sizeof(s));
+
+    LogMessage("[OSdb] Converting style %d (key: %s)", style, s);
+
+    int out;
+    if (gM_StyleMapping.GetValue(s, out))
+    {
+        LogMessage("[OSdb] Style %d converted to %d", style, out);
+        return out;
+    }
+
+    LogMessage("[OSdb] Style %d not found in mapping, returning -1", style);
+    return -1;
+}
+
+void HashStyleConfig()
+{
+    char sPath[PLATFORM_MAX_PATH];
+    char hash[160];
+    BuildPath(Path_SM, sPath, sizeof(sPath), "configs/shavit-styles.cfg");
+    if (FileExists(sPath))
+    {
+        File fFile = OpenFile(sPath, "r");
+        if (!SHA1File(fFile, hash))
+        {
+            LogError("Failed to hash shavit-styles.cfg");
+            delete fFile;
+            return;
+        }
+
+        delete fFile;
+    }
+    else {
+        LogError("[OSdb] Failed to find shavit-styles.cfg");
+        return;
+    }
+
+    gS_StyleHash = hash;
 }
 
 public Action Command_SendWR(int client, int args)
@@ -92,7 +258,7 @@ public Action Command_SendWR(int client, int args)
             "SELECT a.map, a.auth AS steamid, u.name, a.time, a.jumps, a.strafes, a.sync, a.date FROM %splayertimes a " ...
             "JOIN (SELECT MIN(time) time, map, style, track FROM %splayertimes GROUP BY map, style, track) b " ... 
             "JOIN %susers u ON a.time = b.time AND a.auth = u.auth AND a.map = b.map AND a.style = b.style AND a.track = b.track " ...
-            "WHERE a.map = '%s' AND a.style = 0 AND a.track = 0 " ...
+            "WHERE a.map = '%s' AND a.track = 0 " ...
             "ORDER BY a.date DESC;", gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix, map);
 
         gH_Database.Query(SQL_SendWR_Callback, q, 0, DBPrio_Normal);
@@ -122,19 +288,19 @@ public void SQL_SendWR_Callback(Database db, DBResultSet results, const char[] e
     char name[MAX_NAME_LENGTH];
 	results.FetchString(2, name, MAX_NAME_LENGTH);
 
-	char date[32];
-	FormatTime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", results.FetchInt(7));
+    int date = results.FetchInt(7);
 
     float time = results.FetchFloat(3);
     int jumps = results.FetchInt(4);
     int strafes = results.FetchInt(5);
     float sync = results.FetchFloat(6);
+    int style = results.FetchInt(8);
 
     char replaypath[PLATFORM_MAX_PATH * 2];
     gCV_ReplaysDir.GetString(replaypath, sizeof(replaypath));
     Format(replaypath, sizeof(replaypath), "%s/%s.replay", replaypath, map);
 
-    SendODBWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath, 0);
+    SendODBWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath, style);
 }
 
 public void OnConVarChanged(ConVar convar, const char[] oldValue, const char[] newValue)
@@ -153,7 +319,7 @@ public void OnMapStart()
 
 public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldtime, float perfs, float avgvel, float maxvel, int timestamp, bool isbestreplay, bool istoolong, ArrayList replaypaths, ArrayList frames, int preframes, int postframes, const char[] name)
 {
-    if (style != 0 || track != 0 || !isbestreplay)
+    if (track != 0 || !isbestreplay)
     {
         return;
     }
@@ -169,8 +335,7 @@ public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, i
     char steamID[32];
     GetClientAuthId(client, AuthId_Steam3, steamID, sizeof(steamID));
     
-    char date[32];
-    FormatTime(date, sizeof(date), "%Y-%m-%d %H:%M:%S", GetTime());
+    int date = GetTime();
 
     char replaypath[PLATFORM_MAX_PATH * 2];
     gCV_ReplaysDir.GetString(replaypath, sizeof(replaypath));
@@ -179,7 +344,7 @@ public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, i
     SendODBWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath, style);
 }
 
-void SendODBWR(char[] map, char[] steamID, const char[] name, float time, float sync, int strafes, int jumps, char[] date, const char[] replaypath, int style)
+void SendODBWR(char[] map, char[] steamID, const char[] name, float time, float sync, int strafes, int jumps, int date, const char[] replaypath, int style)
 {
     if (strlen(gS_ODBAuthKey) == 0)
 	{
@@ -193,6 +358,13 @@ void SendODBWR(char[] map, char[] steamID, const char[] name, float time, float 
     char hostname[128];
 	gCV_Hostname.GetString(hostname, sizeof(hostname));
 
+    int n_Style = ConvertStyle(style);
+    if (n_Style == -1)
+    {
+        LogMessage("[OSdb] Style conversion failed for style %d, aborting record submission", style);
+        return;
+    }
+
     JSONObject data = new JSONObject();
     data.SetString("map", map);
     data.SetString("steamid", steamID);
@@ -201,12 +373,12 @@ void SendODBWR(char[] map, char[] steamID, const char[] name, float time, float 
     data.SetFloat("sync", sync);
     data.SetInt("strafes", strafes);
     data.SetInt("jumps", jumps);
-    data.SetString("date", date);
+	data.SetInt("date", date);
 	data.SetInt("tickrate", tickrate);
     data.SetString("hostname", hostname);
     data.SetString("public_ip", publicIP);
     data.SetString("private_key", gS_ODBAuthKey);
-    data.SetInt("style", style);
+    data.SetInt("style", n_Style);
     
     char replayFullPath[PLATFORM_MAX_PATH];
     Format(replayFullPath, sizeof(replayFullPath), "%s/%s", gS_GameDir, replaypath);
@@ -269,4 +441,88 @@ void GetTimerSQLPrefix(char[] buffer, int maxlen)
 	}
 
 	delete file;
+}
+
+void AddHeaders(HTTPRequest req)
+{
+    char sPublicIP[32];
+    gCV_PublicIP.GetString(sPublicIP, sizeof(sPublicIP));
+
+    char sHostname[128];
+    // This finds the server's actual hostname automatically
+    FindConVar("hostname").GetString(sHostname, sizeof(sHostname));
+
+    req.SetHeader("public_ip", sPublicIP);
+    req.SetHeader("hostname", sHostname);
+    
+    // Use the AuthKey from your ConVar
+    char sAuth[64];
+    gCV_AuthKey.GetString(sAuth, sizeof(sAuth));
+    req.SetHeader("auth", sAuth);
+    
+    // Tell the website this is a shavit record
+    req.SetHeader("timer_plugin", "shavit");
+}
+
+int Crypt_Base64Encode(const char[] sString, char[] sResult, int len, int sourcelen = 0)
+{
+    char base64_sTable[]  = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int  base64_cFillChar = '=';
+
+    int  nLength;
+    int  resPos;
+
+    if (sourcelen > 0)
+    {
+        nLength = sourcelen;
+    }
+    else
+    {
+        nLength = strlen(sString);
+    }
+
+    for (int nPos = 0; nPos < nLength; nPos++)
+    {
+        int cCode;
+
+        cCode = (sString[nPos] >> 2) & 0x3f;
+        resPos += FormatEx(sResult[resPos], len - resPos, "%c", base64_sTable[cCode]);
+        cCode = (sString[nPos] << 4) & 0x3f;
+
+        if (++nPos < nLength)
+        {
+            cCode |= (sString[nPos] >> 4) & 0x0f;
+        }
+
+        resPos += FormatEx(sResult[resPos], len - resPos, "%c", base64_sTable[cCode]);
+
+        if (nPos < nLength)
+        {
+            cCode = (sString[nPos] << 2) & 0x3f;
+
+            if (++nPos < nLength)
+            {
+                cCode |= (sString[nPos] >> 6) & 0x03;
+            }
+
+            resPos += FormatEx(sResult[resPos], len - resPos, "%c", base64_sTable[cCode]);
+        }
+        else
+        {
+            nPos++;
+            resPos += FormatEx(sResult[resPos], len - resPos, "%c", base64_cFillChar);
+        }
+
+        if (nPos < nLength)
+        {
+            cCode = sString[nPos] & 0x3f;
+            resPos += FormatEx(sResult[resPos], len - resPos, "%c", base64_sTable[cCode]);
+        }
+        else
+        {
+            resPos += FormatEx(sResult[resPos], len - resPos, "%c", base64_cFillChar);
+        }
+    }
+
+    return resPos;
 }

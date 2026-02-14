@@ -9,7 +9,7 @@ type WRRequest struct {
 	Sync       float64 `json:"sync"`
 	Strafes    int     `json:"strafes"`
 	Jumps      int     `json:"jumps"`
-	Date       string  `json:"date"`
+	Date       int64   `json:"date"`
 	Tickrate   int     `json:"tickrate"`
 	Style      int     `json:"style"`
 	ReplayPath string  `json:"replay_path"`
@@ -27,7 +27,7 @@ type OffstyleDBPayload struct {
 	Sync        float64 `json:"sync"`
 	Strafes     int     `json:"strafes"`
 	Jumps       int     `json:"jumps"`
-	Date        string  `json:"date"`
+	Date        int64   `json:"date"`
 	Tickrate    int     `json:"tickrate"`
 	Style       int     `json:"style"`
 }

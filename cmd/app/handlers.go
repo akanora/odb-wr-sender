@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,6 +32,7 @@ func (app *application) offstyleDBSendWR(c fiber.Ctx) error {
 	v.Check(req.Strafes >= 0, "strafes", "strafes count cannot be negative")
 	v.Check(req.Jumps >= 0, "jumps", "jumps count cannot be negative")
 	v.Check(req.Style >= 0, "style", "style must be zero or higher")
+	v.Check(req.Date > 0, "date", "date must be a unix timestamp")
 	v.Check(validator.NotBlank(req.ReplayPath), "replay_path", "replay file path is required")
 	v.Check(validator.PermittedValue(filepath.Ext(req.ReplayPath), ".replay", ".rec", ".txt"), "replay_path", "unsupported file extension")
 	if !v.Valid() {
@@ -133,43 +133,22 @@ func (app *application) offstyleDBSendWR(c fiber.Ctx) error {
 			return
 		}
 
-		uploadBody := &bytes.Buffer{}
-		writer := multipart.NewWriter(uploadBody)
 		file, err := os.Open(replayPath)
 		if err != nil {
 			app.logger.Error("failed to open replay file", "path", replayPath, "err", err)
-			_ = writer.Close()
 			return
 		}
-
-		part, err := writer.CreateFormFile("file", filepath.Base(replayPath))
-		if err != nil {
-			app.logger.Error("failed to create replay form file", "err", err)
+		defer func() {
 			_ = file.Close()
-			_ = writer.Close()
-			return
-		}
+		}()
 
-		if _, err := io.Copy(part, file); err != nil {
-			app.logger.Error("failed to stream replay file", "err", err)
-			_ = file.Close()
-			_ = writer.Close()
-			return
-		}
-		_ = file.Close()
-
-		if err := writer.Close(); err != nil {
-			app.logger.Error("failed to finalize replay upload body", "err", err)
-			return
-		}
-
-		uploadRequest, err := http.NewRequest(http.MethodPost, uploadURL, uploadBody)
+		uploadRequest, err := http.NewRequest(http.MethodPut, uploadURL, file)
 		if err != nil {
 			app.logger.Error("failed to build replay upload request", "err", err)
 			return
 		}
-
-		uploadRequest.Header.Set("Content-Type", writer.FormDataContentType())
+		uploadRequest.ContentLength = replayInfo.Size()
+		uploadRequest.Header.Set("Content-Type", "application/octet-stream")
 		uploadRequest.Header.Set("auth", req.PrivateKey)
 		uploadRequest.Header.Set("public_ip", req.PublicIP)
 		uploadRequest.Header.Set("hostname", req.Hostname)
@@ -195,7 +174,7 @@ func (app *application) offstyleDBSendWR(c fiber.Ctx) error {
 			return
 		}
 
-		app.logger.Debug("replay uploaded to OffstyleDB", "map", payload.Map, "player", payload.Name)
+		app.logger.Debug("replay uploaded to OffstyleDB", "map", payload.Map, "player", payload.Name, "filename", filepath.Base(replayPath))
 	}(payload, req.ReplayPath, fileInfo, fileStatErr)
 
 	return c.SendStatus(fiber.StatusAccepted)
