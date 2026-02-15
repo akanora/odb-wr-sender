@@ -20,11 +20,14 @@ Convar gCV_Hostname = null;
 char gS_ODBAuthKey[64];
 ConVar gCV_Authentication = null;
 ConVar gCV_PublicIP = null;
+ConVar gCV_Debug = null;
 
 char gS_URL[128];
 char gS_AuthKey[64];
 char gS_GameDir[PLATFORM_MAX_PATH];
 char gS_StyleHash[160];
+
+bool gB_Debug = false;
 
 char gS_MySQLPrefix[32];
 Database gH_Database = null;
@@ -63,6 +66,7 @@ public void OnPluginStart()
 
     gCV_PublicIP = new Convar("odb_public_ip", "127.0.0.1:27015", "Input the IP:PORT of the game server here. It will be used to identify the game server.");
 	gCV_Authentication = new Convar("odb_private_key", "", "Fill in your OffstyleDB API access key here. This key can be used to submit records to the database using your server key - abuse will lead to removal.");
+    gCV_Debug = new Convar("odb_wr_debug", "0", "Enable debug logs for odb-wr-sender (0/1).", _, true, 0.0, true, 1.0);
 
     gCV_AuthKey = new Convar("odb_wr_sender_auth_key", "authKey1", "API Key");
     gCV_URL = new Convar("odb_wr_sender_url", "http://127.0.0.1:4176/offstyledb/send-wr", "URL");
@@ -73,6 +77,7 @@ public void OnPluginStart()
     gCV_AuthKey.AddChangeHook(OnConVarChanged);
     gCV_URL.AddChangeHook(OnConVarChanged);
     gCV_GameDir.AddChangeHook(OnConVarChanged);
+    gCV_Debug.AddChangeHook(OnConVarChanged);
 
     Convar.AutoExecConfig();
 
@@ -85,7 +90,7 @@ public void OnPluginEnd()
 {
     if (gM_StyleMapping != null)
     {
-        LogMessage("[OSdb] Cleaning up StyleMapping StringMap");
+        DebugLog("[OSdb] Cleaning up StyleMapping StringMap");
         delete gM_StyleMapping;
         gM_StyleMapping = null;
     }
@@ -98,7 +103,7 @@ public void OnConfigsExecuted()
 
 void GetStyleMapping(bool forceRefresh = false)
 {
-    LogMessage("[OSdb] Starting style mapping request (forceRefresh: %s)", forceRefresh ? "true" : "false");
+    DebugLog("[OSdb] Starting style mapping request (forceRefresh: %s)", forceRefresh ? "true" : "false");
     
     if (!forceRefresh)
     {
@@ -109,16 +114,16 @@ void GetStyleMapping(bool forceRefresh = false)
 
         if (strcmp(temp, gS_StyleHash) == 0)
         {
-            LogMessage("[OSdb] Style hash unchanged, skipping mapping request");
+            DebugLog("[OSdb] Style hash unchanged, skipping mapping request");
             return;
         }
     }
     else
     {
-        LogMessage("[OSdb] Force refresh requested, bypassing hash check");
+        DebugLog("[OSdb] Force refresh requested, bypassing hash check");
     }
 
-    LogMessage("[OSdb] Style hash changed or forced refresh, requesting new mapping from server");
+    DebugLog("[OSdb] Style hash changed or forced refresh, requesting new mapping from server");
 
     // FIX: Format the URL properly instead of using ...
     char sFullURL[256];
@@ -192,24 +197,23 @@ int ConvertStyle(int style)
 {
     if (gM_StyleMapping == null)
     {
-        LogError("[OSdb] Style mapping is null in ConvertStyle");
-        LogMessage("[OSdb] ConvertStyle called but style mapping is null");
+        DebugLog("[OSdb] Style mapping is null in ConvertStyle");
         return -1;
     }
     
     char s[16];
     IntToString(style, s, sizeof(s));
 
-    LogMessage("[OSdb] Converting style %d (key: %s)", style, s);
+    DebugLog("[OSdb] Converting style %d (key: %s)", style, s);
 
     int out;
     if (gM_StyleMapping.GetValue(s, out))
     {
-        LogMessage("[OSdb] Style %d converted to %d", style, out);
+        DebugLog("[OSdb] Style %d converted to %d", style, out);
         return out;
     }
 
-    LogMessage("[OSdb] Style %d not found in mapping, returning -1", style);
+    DebugLog("[OSdb] Style %d not found in mapping, returning -1", style);
     return -1;
 }
 
@@ -223,7 +227,7 @@ void HashStyleConfig()
         File fFile = OpenFile(sPath, "r");
         if (!SHA1File(fFile, hash))
         {
-            LogError("Failed to hash shavit-styles.cfg");
+            DebugLog("Failed to hash shavit-styles.cfg");
             delete fFile;
             return;
         }
@@ -231,7 +235,7 @@ void HashStyleConfig()
         delete fFile;
     }
     else {
-        LogError("[OSdb] Failed to find shavit-styles.cfg");
+        DebugLog("[OSdb] Failed to find shavit-styles.cfg");
         return;
     }
 
@@ -271,7 +275,7 @@ public void SQL_SendWR_Callback(Database db, DBResultSet results, const char[] e
 {
 	if ((results == null) || (results.RowCount == 0) || !results.FetchRow())
 	{
-        LogMessage("[odb-wr-sender] SQL_SendWR_Callback: No results from record selection query.");
+        DebugLog("[odb-wr-sender] SQL_SendWR_Callback: No results from record selection query.");
 		return;
 	}
 
@@ -308,6 +312,7 @@ public void OnConVarChanged(ConVar convar, const char[] oldValue, const char[] n
     gCV_URL.GetString(gS_URL, sizeof(gS_URL));
     gCV_AuthKey.GetString(gS_AuthKey, sizeof(gS_AuthKey));
     gCV_GameDir.GetString(gS_GameDir, sizeof(gS_GameDir));
+    gB_Debug = (gCV_Debug != null) ? gCV_Debug.BoolValue : false;
 }
 
 public void OnMapStart()
@@ -315,6 +320,7 @@ public void OnMapStart()
     gCV_URL.GetString(gS_URL, sizeof(gS_URL));
     gCV_AuthKey.GetString(gS_AuthKey, sizeof(gS_AuthKey));
     gCV_GameDir.GetString(gS_GameDir, sizeof(gS_GameDir));
+    gB_Debug = (gCV_Debug != null) ? gCV_Debug.BoolValue : false;
 }
 
 public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldtime, float perfs, float avgvel, float maxvel, int timestamp, bool isbestreplay, bool istoolong, ArrayList replaypaths, ArrayList frames, int preframes, int postframes, const char[] name)
@@ -361,7 +367,7 @@ void SendODBWR(char[] map, char[] steamID, const char[] name, float time, float 
     int n_Style = ConvertStyle(style);
     if (n_Style == -1)
     {
-        LogMessage("[OSdb] Style conversion failed for style %d, aborting record submission", style);
+        DebugLog("[OSdb] Style conversion failed for style %d, aborting record submission", style);
         return;
     }
 
@@ -395,8 +401,20 @@ void OnSendODBWR_Callback(HTTPResponse response, any value)
 {
     if ((response.Status != HTTPStatus_Accepted) && (response.Status != HTTPStatus_OK))
     {
-		LogError("[odb-wr-sender] Failed. Status: %d", response.Status);
+		DebugLog("[odb-wr-sender] Failed. Status: %d", response.Status);
     }
+}
+
+void DebugLog(const char[] fmt, any ...)
+{
+    if (!gB_Debug)
+    {
+        return;
+    }
+
+    char buffer[512];
+    VFormat(buffer, sizeof(buffer), fmt, 2);
+    LogMessage("%s", buffer);
 }
 
 // stocks from shavit.inc
