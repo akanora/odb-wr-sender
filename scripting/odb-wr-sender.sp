@@ -14,7 +14,6 @@ int tickrate;
 Convar gCV_URL = null;
 Convar gCV_AuthKey = null;
 Convar gCV_GameDir = null;
-Convar gCV_ReplaysDir = null;
 Convar gCV_Hostname = null;
 
 char gS_ODBAuthKey[64];
@@ -39,11 +38,12 @@ public Plugin myinfo =
     name = "odb-wr-sender",
 	author = "happydez",
 	description = "✿˘✧.*☆*✲☆⋆❤˘━✧.*",
-	version = "1.0.0",
+	version = "1.0.1",
     url = "https://github.com/akanora/odb-wr-sender"
 }
 
 native float Shavit_GetWorldRecord(int style, int track);
+native int Shavit_GetBhopStyle(int client);
 forward void Shavit_OnReplaySaved(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldtime, float perfs, float avgvel, float maxvel, int timestamp, bool isbestreplay, bool istoolong, ArrayList replaypaths, ArrayList frames, int preframes, int postframes, const char[] name);
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
@@ -71,7 +71,6 @@ public void OnPluginStart()
     gCV_AuthKey = new Convar("odb_wr_sender_auth_key", "authKey1", "API Key");
     gCV_URL = new Convar("odb_wr_sender_url", "http://127.0.0.1:4176/offstyledb/send-wr", "URL");
     gCV_GameDir = new Convar("odb_wr_game_dir", "/app/cstrike", "Game dir");
-    gCV_ReplaysDir = new Convar("odb_wr_replays_dir", "replaybot/0", "Replays dir");
     gCV_Hostname = new Convar("odb_wr_hostname", "insert your hostname here", "hostname");
 
     gCV_AuthKey.AddChangeHook(OnConVarChanged);
@@ -83,7 +82,7 @@ public void OnPluginStart()
 
     gM_StyleMapping = new StringMap();
 
-    // RegAdminCmd("sm_send_wr", Command_SendWR, ADMFLAG_RCON);
+    RegAdminCmd("sm_send_wr_odb", Command_SendWR, ADMFLAG_RCON);
 }
 
 public void OnPluginEnd()
@@ -246,27 +245,41 @@ public Action Command_SendWR(int client, int args)
 {
     if (args < 1)
     {
-        ReplyToCommand(client, "Use !send_wr <map>");
+        ReplyToCommand(client, "Use !send_wr_odb <map> [track]");
+        return Plugin_Handled;
     }
-    else
+
+    char map[64];
+    GetCmdArg(1, map, sizeof(map));
+    if (StrEqual(map, "."))
     {
-        char map[64];
-        GetCmdArgString(map, sizeof(map));
-        if (StrEqual(map, "."))
-        {
-            GetCurrentMap(map, sizeof(map));
-        }
-
-        char q[1024];
-        Format(q, sizeof(q), 
-            "SELECT a.map, a.auth AS steamid, u.name, a.time, a.jumps, a.strafes, a.sync, a.date FROM %splayertimes a " ...
-            "JOIN (SELECT MIN(time) time, map, style, track FROM %splayertimes GROUP BY map, style, track) b " ... 
-            "JOIN %susers u ON a.time = b.time AND a.auth = u.auth AND a.map = b.map AND a.style = b.style AND a.track = b.track " ...
-            "WHERE a.map = '%s' AND a.track = 0 " ...
-            "ORDER BY a.date DESC;", gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix, map);
-
-        gH_Database.Query(SQL_SendWR_Callback, q, 0, DBPrio_Normal);
+        GetCurrentMap(map, sizeof(map));
     }
+
+    int track = 0;
+    if (args >= 2)
+    {
+        char sTrack[8];
+        GetCmdArg(2, sTrack, sizeof(sTrack));
+        track = StringToInt(sTrack);
+    }
+
+    // Get the player's current style (assumes Shavit_GetBhopStyle is available)
+    int style = 0;
+    if (LibraryExists("shavit"))
+    {
+        style = Shavit_GetBhopStyle(client);
+    }
+
+    char q[1024];
+    Format(q, sizeof(q),
+        "SELECT a.map, a.auth AS steamid, u.name, a.time, a.jumps, a.strafes, a.sync, a.date, a.style, a.track FROM %splayertimes a " ...
+        "JOIN (SELECT MIN(time) time, map, style, track FROM %splayertimes GROUP BY map, style, track) b " ...
+        "JOIN %susers u ON a.time = b.time AND a.auth = u.auth AND a.map = b.map AND a.style = b.style AND a.track = b.track " ...
+        "WHERE a.map = '%s' AND a.track = %d AND a.style = %d " ...
+        "ORDER BY a.date DESC;", gS_MySQLPrefix, gS_MySQLPrefix, gS_MySQLPrefix, map, track, style);
+
+    gH_Database.Query(SQL_SendWR_Callback, q, track, DBPrio_Normal);
 
     return Plugin_Handled;
 }
@@ -280,17 +293,17 @@ public void SQL_SendWR_Callback(Database db, DBResultSet results, const char[] e
 	}
 
     char map[64];
-	results.FetchString(0, map, sizeof(map));
+    results.FetchString(0, map, sizeof(map));
 
-	char steamID[32];
-	results.FetchString(1, steamID, sizeof(steamID));
+    char steamID[32];
+    results.FetchString(1, steamID, sizeof(steamID));
     if (StrContains(steamID, "[U:1:", false) == -1)
     {
         Format(steamID, sizeof(steamID), "[U:1:%s]", steamID);
     }
 
     char name[MAX_NAME_LENGTH];
-	results.FetchString(2, name, MAX_NAME_LENGTH);
+    results.FetchString(2, name, MAX_NAME_LENGTH);
 
     int date = results.FetchInt(7);
 
@@ -299,10 +312,17 @@ public void SQL_SendWR_Callback(Database db, DBResultSet results, const char[] e
     int strafes = results.FetchInt(5);
     float sync = results.FetchFloat(6);
     int style = results.FetchInt(8);
+    int track = data;
 
     char replaypath[PLATFORM_MAX_PATH * 2];
-    gCV_ReplaysDir.GetString(replaypath, sizeof(replaypath));
-    Format(replaypath, sizeof(replaypath), "%s/%s.replay", replaypath, map);
+    if (track == 0)
+    {
+        Format(replaypath, sizeof(replaypath), "replaybot/%d/%s.replay", style, map);
+    }
+    else
+    {
+        Format(replaypath, sizeof(replaypath), "replaybot/%d/%s_%d.replay", style, map, track);
+    }
 
     SendODBWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath, style);
 }
@@ -325,27 +345,30 @@ public void OnMapStart()
 
 public void Shavit_OnReplaySaved(int client, int style, float time, int jumps, int strafes, float sync, int track, float oldtime, float perfs, float avgvel, float maxvel, int timestamp, bool isbestreplay, bool istoolong, ArrayList replaypaths, ArrayList frames, int preframes, int postframes, const char[] name)
 {
-    if (track != 0 || !isbestreplay)
+    // Only submit for main track (track == 0), must be best replay, and must not be worse than WR
+    if (client == 0 || track != 0 || !isbestreplay || time > Shavit_GetWorldRecord(style, track))
     {
         return;
     }
 
-    if (time > Shavit_GetWorldRecord(style, track))
-	{
-		return;
-	}
-
     char map[64];
     GetCurrentMap(map, sizeof(map));
-    
+
     char steamID[32];
     GetClientAuthId(client, AuthId_Steam3, steamID, sizeof(steamID));
-    
+
     int date = GetTime();
 
+    // Always construct the replay path as replaybot/<style>/<map>.replay for main, or ..._<track>.replay for others
     char replaypath[PLATFORM_MAX_PATH * 2];
-    gCV_ReplaysDir.GetString(replaypath, sizeof(replaypath));
-    Format(replaypath, sizeof(replaypath), "%s/%s.replay", replaypath, map);
+    if (track == 0)
+    {
+        Format(replaypath, sizeof(replaypath), "replaybot/%d/%s.replay", style, map);
+    }
+    else
+    {
+        Format(replaypath, sizeof(replaypath), "replaybot/%d/%s_%d.replay", style, map, track);
+    }
 
     SendODBWR(map, steamID, name, time, sync, strafes, jumps, date, replaypath, style);
 }
